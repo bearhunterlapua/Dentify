@@ -1,0 +1,315 @@
+<!-- templates/annotate.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Annotation</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+      }
+      #canvasContainer {
+        position: relative;
+        display: inline-block;
+        margin-right: 40px;
+      }
+      #overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        border: 1px solid #ccc;
+        cursor: crosshair; /* helps indicate user can draw */
+      }
+      /* Simple styling for the Save button */
+      #saveBtn {
+        margin-top: 20px;
+        padding: 10px 20px;
+        font-size: 16px;
+        cursor: pointer;
+      }
+      .ehr-section {
+        display: inline-block;
+        vertical-align: top;
+        max-width: 300px;
+      }
+      .ehr-section h2 {
+        margin-top: 0;
+      }
+      .ehr-section label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: bold;
+      }
+      .ehr-section input,
+      .ehr-section select,
+      .ehr-section textarea {
+        width: 100%;
+        margin-bottom: 15px;
+        padding: 8px;
+        box-sizing: border-box;
+        font-size: 14px;
+      }
+    </style>
+</head>
+<body>
+    <h1>Annotation Page</h1>
+    <p>Status: {{ status }}</p>
+    
+    <!-- Main image + overlay canvas -->
+    <div id="canvasContainer">
+      <!-- The main image -->
+      <img id="baseImage" src="{{ image_url }}" onload="initCanvas()" />
+
+      <!-- Overlay canvas where bounding boxes will be drawn/edited -->
+      <canvas id="overlay"></canvas>
+    </div>
+
+    <!-- EHR Patient Health Records section -->
+    <div class="ehr-section">
+      <h2>Patient Information</h2>
+      <form id="ehrForm">
+        <label for="patientName">Name:</label>
+        <input 
+          type="text" 
+          id="patientName" 
+          name="patientName" 
+          placeholder="Enter patient name" 
+          required 
+        />
+
+        <label for="patientAge">Age:</label>
+        <input
+          type="number"
+          id="patientAge"
+          name="patientAge"
+          placeholder="Enter patient age"
+          min="0"
+          max="120"
+          required
+        />
+
+        <label for="patientGender">Gender:</label>
+        <select id="patientGender" name="patientGender" required>
+          <option value="">Select...</option>
+          <option value="Female">Female</option>
+          <option value="Male">Male</option>
+          <option value="Other">Other</option>
+        </select>
+
+        <label for="medicalHistory">Medical History:</label>
+        <textarea
+          id="medicalHistory"
+          name="medicalHistory"
+          rows="4"
+          placeholder="Relevant medical background..."
+        ></textarea>
+      </form>
+
+      <button id="saveBtn" onclick="saveAllData()">Save Annotations & EHR</button>
+    </div>
+
+    <script>
+      // ----------------------------------------------------------------------
+      // 1) INITIAL DATA / GLOBALS
+      // ----------------------------------------------------------------------
+      // "detections" from server (existing bounding boxes from model)
+      let detections = JSON.parse('{{ detections|tojson }}');
+      
+      // We'll store all bounding boxes in a "boxes" array. Each box is:
+      // { x1, y1, x2, y2, cls }
+      let boxes = detections.map(det => ({
+        x1: det[0],
+        y1: det[1],
+        x2: det[2],
+        y2: det[3],
+        cls: det[4]
+      }));
+
+      // We also store whether user is drawing, and where they started
+      let isDrawing = false;
+      let startX = 0, startY = 0;
+
+      // Canvas / context references
+      let overlay, ctx;
+
+      // If you want to store the original filename to send with the boxes:
+      let currentFilename = "{{ image_url.split('/')|last }}"; 
+      // e.g. "xray_image.jpg" if the route is "/static/uploads/xray_image.jpg"
+
+
+      // ----------------------------------------------------------------------
+      // 2) INIT CANVAS + DRAW EXISTING BOXES
+      // ----------------------------------------------------------------------
+      function initCanvas() {
+        const img = document.getElementById('baseImage');
+        overlay = document.getElementById('overlay');
+        
+        // Set canvas size to match the rendered image size
+        overlay.width = img.width;
+        overlay.height = img.height;
+
+        ctx = overlay.getContext('2d');
+
+        // Draw the existing boxes on load
+        redraw();
+
+        // Add mouse event listeners for drawing
+        overlay.addEventListener('mousedown', onMouseDown);
+        overlay.addEventListener('mousemove', onMouseMove);
+        overlay.addEventListener('mouseup', onMouseUp);
+        overlay.addEventListener('click', onClickRemoveBox);
+      }
+
+
+      // ----------------------------------------------------------------------
+      // 3) MOUSE EVENT HANDLERS
+      // ----------------------------------------------------------------------
+      function onMouseDown(e) {
+        // Start new bounding box
+        isDrawing = true;
+        [startX, startY] = getCanvasCoordinates(e);
+      }
+
+      function onMouseMove(e) {
+        if (!isDrawing) return;
+
+        // Only visually show the new box in progress
+        let [mouseX, mouseY] = getCanvasCoordinates(e);
+        
+        // Re-draw all existing boxes
+        redraw();
+
+        // Draw the in-progress rectangle in a different color
+        ctx.strokeStyle = 'blue';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(startX, startY, mouseX - startX, mouseY - startY);
+      }
+
+      function onMouseUp(e) {
+        if (!isDrawing) return;
+        isDrawing = false;
+
+        let [endX, endY] = getCanvasCoordinates(e);
+
+        // Minimal size check to avoid accidental clicks
+        let minSize = 5;
+        if (Math.abs(endX - startX) < minSize || Math.abs(endY - startY) < minSize) {
+          // Too small => ignore
+          return;
+        }
+
+        // Add the new bounding box
+        boxes.push({
+          x1: startX,
+          y1: startY,
+          x2: endX,
+          y2: endY,
+          cls: 3  // Example default classification
+        });
+
+        // Re-draw including the newly added box
+        redraw();
+      }
+
+      // Click to remove a box (if you click inside it)
+      function onClickRemoveBox(e) {
+        let [mouseX, mouseY] = getCanvasCoordinates(e);
+
+        // Iterate from last to first so we remove the top-most box first
+        for (let i = boxes.length - 1; i >= 0; i--) {
+          let b = boxes[i];
+          let xMin = Math.min(b.x1, b.x2);
+          let xMax = Math.max(b.x1, b.x2);
+          let yMin = Math.min(b.y1, b.y2);
+          let yMax = Math.max(b.y1, b.y2);
+
+          if (mouseX >= xMin && mouseX <= xMax && mouseY >= yMin && mouseY <= yMax) {
+            // Remove this box
+            boxes.splice(i, 1);
+            redraw();
+            break; 
+          }
+        }
+      }
+
+
+      // ----------------------------------------------------------------------
+      // 4) REDRAW ALL BOXES
+      // ----------------------------------------------------------------------
+      function redraw() {
+        // Clear the canvas
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+        // Draw each bounding box
+        boxes.forEach(b => {
+          ctx.strokeStyle = 'red';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(
+            b.x1,
+            b.y1,
+            b.x2 - b.x1,
+            b.y2 - b.y1
+          );
+          // Class label
+          ctx.font = '14px Arial';
+          ctx.fillStyle = 'red';
+          ctx.fillText("Class " + b.cls, b.x1, b.y1 - 5);
+        });
+      }
+
+
+      // ----------------------------------------------------------------------
+      // 5) HELPER: CONVERT MOUSE EVENTS TO CANVAS COORDS
+      // ----------------------------------------------------------------------
+      function getCanvasCoordinates(event) {
+        let rect = overlay.getBoundingClientRect();
+        let x = event.clientX - rect.left;
+        let y = event.clientY - rect.top;
+        return [x, y];
+      }
+
+
+      // ----------------------------------------------------------------------
+      // 6) SAVE ANNOTATIONS + EHR
+      // ----------------------------------------------------------------------
+      function saveAllData() {
+        // 6a) Gather bounding box data
+        let boxArray = boxes.map(b => [b.x1, b.y1, b.x2, b.y2, b.cls]);
+
+        // 6b) Gather EHR data from the form
+        let ehrData = {
+          patientName: document.getElementById('patientName').value,
+          patientAge: document.getElementById('patientAge').value,
+          patientGender: document.getElementById('patientGender').value,
+          medicalHistory: document.getElementById('medicalHistory').value
+        };
+
+        // 6c) Create payload combining both annotation data and EHR info
+        let payload = {
+          filename: currentFilename,
+          boxes: boxArray,
+          ehr: ehrData
+        };
+
+        // 6d) Send to Flask (example endpoint /save_annotations)
+        fetch('/save_annotations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.status === "ok") {
+            alert("Annotations & EHR saved successfully!");
+          } else {
+            alert("Error: " + data.message);
+          }
+        })
+        .catch(err => {
+          console.error(err);
+          alert("Error saving data.");
+        });
+      }
+    </script>
+</body>
+</html>
