@@ -1,5 +1,4 @@
-image:
-  file: .gitpod.Dockerfile
+image: python:3.8
 
 tasks:
   - init: pip install -r requirements.txt
