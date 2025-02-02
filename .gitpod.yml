@@ -1,9 +1,7 @@
-image: python:3.8
+image:
+  file: .gitpod.Dockerfile
 
+# Example tasks
 tasks:
   - init: pip install -r requirements.txt
     command: python app.py
-
-ports:
-  - port: 5000
-    onOpen: open-preview
