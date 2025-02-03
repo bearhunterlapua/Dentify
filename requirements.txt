@@ -4,3 +4,4 @@ Flask
 torch
 torchvision
 flask_sqlalchemy
+yolov5
