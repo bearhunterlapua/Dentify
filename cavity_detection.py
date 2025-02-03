@@ -9,9 +9,11 @@ yolov5_path = "/Users/eric/Desktop/cavity_detection_app/yolov5"
 if yolov5_path not in sys.path:
     sys.path.append(yolov5_path)
 
-from models.common import DetectMultiBackend
-from utils.augmentations import letterbox
-from utils.general import non_max_suppression, scale_boxes
+# from models.common import DetectMultiBackend
+from common import DetectMultiBackend, letterbox, non_max_suppression, scale_boxes
+
+# from utils.augmentations import letterbox
+# from utils.general import non_max_suppression, scale_boxes
 
 ###############################################################################
 # GLOBAL DATA (class names, alveolar detection, etc.)
