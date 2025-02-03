@@ -3,3 +3,4 @@ opencv-python
 Flask
 torch
 torchvision
+flask_sqlalchemy
